@@ -268,11 +268,43 @@ def webhook_valezap() -> Response:
         or (request.headers.get("authorization") or "").replace("Bearer ", "")
     )
     service_key = current_app.config.get("SERVICE_API_KEY")
+    client_key = current_app.config.get("CLIENT_API_KEY")
 
-    is_service_request = bool(service_key) and provided_key == service_key
-    current_app.logger.info(
-        "Webhook authentication evaluated: service_mode=%s", is_service_request
+    body_service_key = ""
+    if isinstance(payload, dict):
+        raw_service_key = (
+            payload.get("service_api_key")
+            or payload.get("serviceKey")
+            or payload.get("service-token")
+            or payload.get("serviceToken")
+        )
+        if raw_service_key is not None:
+            body_service_key = str(raw_service_key).strip()
+
+    is_service_request = bool(service_key) and (
+        provided_key == service_key or body_service_key == service_key
     )
+
+    if not is_service_request and client_key and provided_key == client_key:
+        current_app.logger.debug("Webhook authenticated with client key")
+
+    if body_service_key:
+        payload.pop("service_api_key", None)
+        payload.pop("serviceKey", None)
+        payload.pop("service-token", None)
+        payload.pop("serviceToken", None)
+
+    current_app.logger.info(
+        "Webhook authentication evaluated: service_mode=%s (header=%s body_token=%s)",
+        is_service_request,
+        bool(provided_key and provided_key == service_key),
+        bool(body_service_key),
+    )
+
+    if not is_service_request:
+        current_app.logger.info(
+            "Webhook treated as user workflow; awaiting external reply"
+        )
 
     try:
         if is_service_request:
