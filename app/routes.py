@@ -19,7 +19,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .database import db_session
 from .models import ChatMessage
-from .services.responses import generate_auto_reply
 from .sse import broker
 
 
@@ -31,15 +30,15 @@ pages_bp = Blueprint("pages", __name__)
 ALLOWED_WEBHOOK_HOSTS = {"n8n-n8n-webhook.jhbg9t.easypanel.host"}
 
 
-def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> None:
+def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> dict[str, str] | None:
     webhook_url = current_app.config.get("EXTERNAL_WEBHOOK_URL", "").strip()
     if not webhook_url:
-        return
+        return None
 
     parsed = urlparse(webhook_url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_WEBHOOK_HOSTS:
         current_app.logger.warning("Skipping external webhook: URL not allowed")
-        return
+        return None
 
     payload = {
         "session": session_id,
@@ -55,8 +54,46 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
             response.raise_for_status()
     except httpx.HTTPError:
         current_app.logger.exception("Failed to call external webhook")
+        return None
+
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+
+    raw_reply = data.get("message") or data.get("mensagem") or data.get("reply")
+    reply_text = str(raw_reply).strip() if raw_reply is not None else ""
+    if not reply_text:
+        return None
+
+    raw_session = data.get("session") or data.get("sessao") or data.get("session_id")
+    reply_session = str(raw_session).strip() if raw_session is not None else session_id
+    reply_session = reply_session or session_id
+
+    raw_player = data.get("player") or data.get("player_id")
+    reply_player = str(raw_player).strip() if raw_player is not None else player_id
+    reply_player = reply_player or player_id
+
+    return {
+        "session_id": reply_session,
+        "player_id": reply_player,
+        "message": reply_text,
+    }
 
 
+
+
+def _pick_payload_value(payload: dict[str, object], *keys: str) -> str:
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if value is None:
+            continue
+        candidate = value.strip() if isinstance(value, str) else str(value).strip()
+        if candidate:
+            return candidate
+    return ""
 
 
 @pages_bp.route("/")
@@ -123,12 +160,12 @@ def stream_messages() -> Response:
 @api_bp.route("/functions/v1/webhook-valezap", methods=["POST"])
 def webhook_valezap() -> Response:
     payload = request.get_json(silent=True) or {}
-    sessao = (payload.get("sessao") or "").strip()
-    player = (payload.get("player") or "").strip()
-    mensagem = (payload.get("mensagem") or "").strip()
+    sessao = _pick_payload_value(payload, "sessao", "session", "session_id")
+    player = _pick_payload_value(payload, "player", "player_id")
+    mensagem = _pick_payload_value(payload, "mensagem", "message", "content", "texto")
 
     if not sessao or not player or not mensagem:
-        return jsonify({"error": "Parâmetros obrigatórios: sessao, player, mensagem"}), 400
+        return jsonify({"error": "Parametros obrigatorios: sessao, player, mensagem"}), 400
 
     provided_key = (
         request.headers.get("x-api-key")
@@ -160,35 +197,33 @@ def webhook_valezap() -> Response:
         )
         db_session.add(user_message)
         db_session.commit()
+        user_dict = user_message.to_dict()
 
-        dispatch_external_webhook(sessao, player, mensagem)
+        reply_data = dispatch_external_webhook(sessao, player, mensagem)
 
-        reply_content = generate_auto_reply(mensagem)
-        bot_message = ChatMessage(
-            session_id=sessao,
-            player_id=player,
-            message=reply_content,
-            is_from_user=False,
-        )
-        db_session.add(bot_message)
-        db_session.commit()
-        bot_dict = bot_message.to_dict()
-        broker.publish(bot_dict)
+        response_payload: dict[str, object] = {
+            "sessao": sessao,
+            "player": player,
+            "mensagem": mensagem,
+            "record": user_dict,
+        }
+        status_code = 202
 
-        return (
-            jsonify(
-                {
-                    "success": True,
-                    "data": {
-                        "sessao": sessao,
-                        "player": player,
-                        "mensagem": mensagem,
-                        "reply": bot_dict,
-                    },
-                }
-            ),
-            200,
-        )
+        if reply_data:
+            reply_message = ChatMessage(
+                session_id=reply_data["session_id"],
+                player_id=reply_data["player_id"],
+                message=reply_data["message"],
+                is_from_user=False,
+            )
+            db_session.add(reply_message)
+            db_session.commit()
+            bot_dict = reply_message.to_dict()
+            broker.publish(bot_dict)
+            response_payload["reply"] = bot_dict
+            status_code = 200
+
+        return jsonify({"success": True, "data": response_payload}), status_code
 
     except SQLAlchemyError:
         db_session.rollback()

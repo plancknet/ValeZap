@@ -98,6 +98,7 @@
             statusIndicator.textContent = 'Enviando...';
         } else {
             sendButton.removeAttribute('aria-busy');
+            sendButton.disabled = textarea.value.trim().length === 0;
             statusIndicator.textContent = 'Online';
         }
     };
@@ -212,6 +213,7 @@
         textarea.style.height = 'auto';
         sendButton.disabled = true;
         sendMessage(value);
+        textarea.focus();
     });
 
     loadHistory().then(connectStream);
