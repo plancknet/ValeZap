@@ -33,11 +33,14 @@ ALLOWED_WEBHOOK_HOSTS = {"n8n-n8n-webhook.jhbg9t.easypanel.host"}
 def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> dict[str, str] | None:
     webhook_url = current_app.config.get("EXTERNAL_WEBHOOK_URL", "").strip()
     if not webhook_url:
+        current_app.logger.info("External webhook skipped: no URL configured")
         return None
 
     parsed = urlparse(webhook_url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_WEBHOOK_HOSTS:
-        current_app.logger.warning("Skipping external webhook: URL not allowed")
+        current_app.logger.warning(
+            "External webhook blocked: host %s is not allowed", parsed.netloc
+        )
         return None
 
     payload = {
@@ -45,6 +48,12 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
         "player": player_id,
         "message": message,
     }
+    current_app.logger.info(
+        "Dispatching external webhook to %s for session=%s player=%s",
+        webhook_url,
+        session_id,
+        player_id,
+    )
 
     try:
         with httpx.Client(timeout=5.0) as client:
@@ -52,27 +61,45 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
                 webhook_url, json=payload, follow_redirects=False
             )
             response.raise_for_status()
-    except httpx.HTTPError:
-        current_app.logger.exception("Failed to call external webhook")
+    except httpx.HTTPError as exc:
+        current_app.logger.exception(
+            "External webhook request failed: %s", exc
+        )
         return None
+
+    current_app.logger.info(
+        "External webhook responded with status %s",
+        response.status_code,
+    )
 
     try:
         data = response.json()
     except ValueError:
+        current_app.logger.warning("External webhook returned non JSON body")
         return None
 
-    raw_reply = data.get("message") or data.get("mensagem") or data.get("reply")
-    reply_text = str(raw_reply).strip() if raw_reply is not None else ""
+    reply_text = _extract_nested_value(
+        data,
+        ("message", "mensagem", "reply", "text", "conteudo", "content"),
+    )
     if not reply_text:
+        current_app.logger.info("External webhook did not return reply text")
         return None
 
-    raw_session = data.get("session") or data.get("sessao") or data.get("session_id")
-    reply_session = str(raw_session).strip() if raw_session is not None else session_id
-    reply_session = reply_session or session_id
+    reply_session = _extract_nested_value(
+        data,
+        ("sessao", "session", "session_id"),
+    ) or session_id
+    reply_player = _extract_nested_value(
+        data,
+        ("player", "player_id"),
+    ) or player_id
 
-    raw_player = data.get("player") or data.get("player_id")
-    reply_player = str(raw_player).strip() if raw_player is not None else player_id
-    reply_player = reply_player or player_id
+    current_app.logger.info(
+        "External webhook produced reply for session=%s player=%s",
+        reply_session,
+        reply_player,
+    )
 
     return {
         "session_id": reply_session,
@@ -83,17 +110,68 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
 
 
 
-def _pick_payload_value(payload: dict[str, object], *keys: str) -> str:
-    for key in keys:
-        if key not in payload:
-            continue
-        value = payload.get(key)
-        if value is None:
-            continue
-        candidate = value.strip() if isinstance(value, str) else str(value).strip()
-        if candidate:
-            return candidate
-    return ""
+def _pick_payload_value(payload: object, *keys: str) -> str:
+    if isinstance(payload, str):
+        candidate = payload.strip()
+        return candidate if candidate else ""
+
+    if isinstance(payload, dict):
+        for key in keys:
+            if key not in payload:
+                continue
+            value = payload.get(key)
+            candidate = _pick_payload_value(value, *keys)
+            if candidate:
+                return candidate
+        for value in payload.values():
+            candidate = _pick_payload_value(value, *keys)
+            if candidate:
+                return candidate
+        return ""
+
+    if isinstance(payload, (list, tuple)):
+        for item in payload:
+            candidate = _pick_payload_value(item, *keys)
+            if candidate:
+                return candidate
+        return ""
+
+    if payload is None:
+        return ""
+
+    candidate = str(payload).strip()
+    return candidate if candidate else ""
+
+
+def _extract_nested_value(payload: object, keys: tuple[str, ...]) -> str:
+    if isinstance(payload, str):
+        candidate = payload.strip()
+        return candidate if candidate else ""
+
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload:
+                candidate = _extract_nested_value(payload[key], keys)
+                if candidate:
+                    return candidate
+        for value in payload.values():
+            candidate = _extract_nested_value(value, keys)
+            if candidate:
+                return candidate
+        return ""
+
+    if isinstance(payload, (list, tuple)):
+        for item in payload:
+            candidate = _extract_nested_value(item, keys)
+            if candidate:
+                return candidate
+        return ""
+
+    if payload is None:
+        return ""
+
+    candidate = str(payload).strip()
+    return candidate if candidate else ""
 
 
 @pages_bp.route("/")
@@ -160,11 +238,29 @@ def stream_messages() -> Response:
 @api_bp.route("/functions/v1/webhook-valezap", methods=["POST"])
 def webhook_valezap() -> Response:
     payload = request.get_json(silent=True) or {}
+    current_app.logger.info(
+        "Webhook request received with keys=%s",
+        sorted(payload.keys()) if isinstance(payload, dict) else type(payload),
+    )
+
     sessao = _pick_payload_value(payload, "sessao", "session", "session_id")
     player = _pick_payload_value(payload, "player", "player_id")
     mensagem = _pick_payload_value(payload, "mensagem", "message", "content", "texto")
 
+    current_app.logger.info(
+        "Webhook payload parsed: session=%s player=%s message_length=%s",
+        sessao or "-",
+        player or "-",
+        len(mensagem) if mensagem else 0,
+    )
+
     if not sessao or not player or not mensagem:
+        current_app.logger.warning(
+            "Webhook rejected: missing required fields (session=%s, player=%s, has_message=%s)",
+            bool(sessao),
+            bool(player),
+            bool(mensagem),
+        )
         return jsonify({"error": "Parametros obrigatorios: sessao, player, mensagem"}), 400
 
     provided_key = (
@@ -174,9 +270,17 @@ def webhook_valezap() -> Response:
     service_key = current_app.config.get("SERVICE_API_KEY")
 
     is_service_request = bool(service_key) and provided_key == service_key
+    current_app.logger.info(
+        "Webhook authentication evaluated: service_mode=%s", is_service_request
+    )
 
     try:
         if is_service_request:
+            current_app.logger.info(
+                "Persisting service message for session=%s player=%s",
+                sessao,
+                player,
+            )
             message_record = ChatMessage(
                 session_id=sessao,
                 player_id=player,
@@ -187,8 +291,16 @@ def webhook_valezap() -> Response:
             db_session.commit()
             message_dict = message_record.to_dict()
             broker.publish(message_dict)
+            current_app.logger.info(
+                "Service message published id=%s", message_dict.get("id")
+            )
             return jsonify({"success": True, "data": message_dict}), 200
 
+        current_app.logger.info(
+            "Persisting user message for session=%s player=%s",
+            sessao,
+            player,
+        )
         user_message = ChatMessage(
             session_id=sessao,
             player_id=player,
@@ -198,6 +310,10 @@ def webhook_valezap() -> Response:
         db_session.add(user_message)
         db_session.commit()
         user_dict = user_message.to_dict()
+        current_app.logger.info(
+            "User message stored id=%s; dispatching to external webhook",
+            user_dict.get("id"),
+        )
 
         reply_data = dispatch_external_webhook(sessao, player, mensagem)
 
@@ -210,6 +326,11 @@ def webhook_valezap() -> Response:
         status_code = 202
 
         if reply_data:
+            current_app.logger.info(
+                "Reply received from external webhook for session=%s player=%s",
+                reply_data["session_id"],
+                reply_data["player_id"],
+            )
             reply_message = ChatMessage(
                 session_id=reply_data["session_id"],
                 player_id=reply_data["player_id"],
@@ -222,6 +343,11 @@ def webhook_valezap() -> Response:
             broker.publish(bot_dict)
             response_payload["reply"] = bot_dict
             status_code = 200
+            current_app.logger.info(
+                "Reply stored and published id=%s", bot_dict.get("id")
+            )
+        else:
+            current_app.logger.info("External webhook returned no reply")
 
         return jsonify({"success": True, "data": response_payload}), status_code
 
