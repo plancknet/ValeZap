@@ -87,6 +87,10 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
         current_app.logger.info("External webhook did not return reply text")
         return None
 
+    if reply_text.lower() == "workflow was started":
+        current_app.logger.info("External webhook returned placeholder message; ignoring")
+        return None
+
     raw_reply_session = _extract_nested_value(
         data,
         ("sessao", "session", "session_id"),
