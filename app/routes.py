@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from queue import Empty
+import uuid
 from urllib.parse import urlparse
 
 import httpx
@@ -86,14 +87,17 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
         current_app.logger.info("External webhook did not return reply text")
         return None
 
-    reply_session = _extract_nested_value(
+    raw_reply_session = _extract_nested_value(
         data,
         ("sessao", "session", "session_id"),
     ) or session_id
-    reply_player = _extract_nested_value(
+    reply_session = _normalize_uuid(raw_reply_session, session_id, label="session")
+
+    raw_reply_player = _extract_nested_value(
         data,
         ("player", "player_id"),
     ) or player_id
+    reply_player = _normalize_uuid(raw_reply_player, player_id, label="player")
 
     current_app.logger.info(
         "External webhook produced reply for session=%s player=%s",
@@ -107,6 +111,20 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
         "message": reply_text,
     }
 
+
+
+def _normalize_uuid(value: str, fallback: str, *, label: str) -> str:
+    try:
+        uuid.UUID(value)
+        return value
+    except (ValueError, AttributeError, TypeError):
+        if value and value != fallback:
+            current_app.logger.info(
+                "External webhook reply %s value '%s' is invalid; using fallback",
+                label,
+                value,
+            )
+        return fallback
 
 
 
