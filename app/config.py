@@ -15,7 +15,7 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "vale-zap-secret")
     DATABASE_URL = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/valezap",
+        "postgresql+psycopg://postgres:Mrs36861480%21@evolution_postgres_python:5432/postgres_python",
     )
     SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "change-me")
     CLIENT_API_KEY = os.getenv(
