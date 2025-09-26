@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
 from queue import Empty
+from urllib.parse import urlparse
+
+import httpx
 
 from flask import (
     Blueprint,
@@ -22,6 +25,38 @@ from .sse import broker
 
 api_bp = Blueprint("api", __name__)
 pages_bp = Blueprint("pages", __name__)
+
+
+
+ALLOWED_WEBHOOK_HOSTS = {"n8n-n8n-webhook.jhbg9t.easypanel.host"}
+
+
+def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> None:
+    webhook_url = current_app.config.get("EXTERNAL_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+
+    parsed = urlparse(webhook_url)
+    if parsed.scheme != "https" or parsed.netloc not in ALLOWED_WEBHOOK_HOSTS:
+        current_app.logger.warning("Skipping external webhook: URL not allowed")
+        return
+
+    payload = {
+        "session": session_id,
+        "player": player_id,
+        "message": message,
+    }
+
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.post(
+                webhook_url, json=payload, follow_redirects=False
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        current_app.logger.exception("Failed to call external webhook")
+
+
 
 
 @pages_bp.route("/")
@@ -125,6 +160,8 @@ def webhook_valezap() -> Response:
         )
         db_session.add(user_message)
         db_session.commit()
+
+        dispatch_external_webhook(sessao, player, mensagem)
 
         reply_content = generate_auto_reply(mensagem)
         bot_message = ChatMessage(

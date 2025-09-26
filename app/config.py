@@ -18,8 +18,13 @@ class Config:
         "postgresql+psycopg://postgres:Mrs36861480%21@evolution_postgres_python:5432/postgres_python",
     )
     SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "change-me")
+    EXTERNAL_WEBHOOK_URL = os.getenv(
+        "EXTERNAL_WEBHOOK_URL",
+        "https://n8n-n8n-webhook.jhbg9t.easypanel.host/webhook/34ae601d-ead7-491e-9bbc-f246089ee5e6",
+    )
     CLIENT_API_KEY = os.getenv(
         "CLIENT_API_KEY", "webhook-api-key-placeholder"
     )
     AUTO_REPLY_MODE = os.getenv("AUTO_REPLY_MODE", "echo")
     DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+
