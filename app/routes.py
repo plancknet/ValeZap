@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from queue import Empty
+from datetime import datetime, timezone
 import uuid
 from urllib.parse import urlparse
 
@@ -239,15 +240,65 @@ def stream_messages() -> Response:
         return jsonify({"error": "Missing sessao and player parameters"}), 400
 
     queue = broker.subscribe(session_id, player_id)
+    last_seen_at = datetime.now(timezone.utc)
+    seen_ids: set[str] = set()
 
     def event_stream():
+        nonlocal last_seen_at
         try:
             while True:
                 try:
-                    message = queue.get(timeout=15)
+                    message = queue.get(timeout=5)
+                    message_id = str(message.get("id") or "")
+                    if message_id and message_id in seen_ids:
+                        continue
+                    created_at_iso = message.get("created_at")
+                    if created_at_iso:
+                        try:
+                            last_seen_at = max(
+                                last_seen_at,
+                                datetime.fromisoformat(created_at_iso),
+                            )
+                        except ValueError:
+                            pass
+                    if message_id:
+                        seen_ids.add(message_id)
                     yield broker.format_sse(message)
                 except Empty:
-                    yield ": keep-alive\n\n"
+                    try:
+                        stmt = (
+                            select(ChatMessage)
+                            .where(
+                                ChatMessage.session_id == session_id,
+                                ChatMessage.player_id == player_id,
+                                ChatMessage.created_at > last_seen_at,
+                            )
+                            .order_by(ChatMessage.created_at.asc())
+                        )
+                        new_messages = (
+                            db_session.execute(stmt).scalars().all()
+                        )
+                        if new_messages:
+                            for db_message in new_messages:
+                                message_dict = db_message.to_dict()
+                                message_id = str(message_dict.get("id") or "")
+                                if message_id and message_id in seen_ids:
+                                    continue
+                                if message_id:
+                                    seen_ids.add(message_id)
+                                last_seen_at = max(
+                                    last_seen_at,
+                                    db_message.created_at or last_seen_at,
+                                )
+                                yield broker.format_sse(message_dict)
+                        else:
+                            yield ": keep-alive\n\n"
+                    except SQLAlchemyError:
+                        db_session.rollback()
+                        current_app.logger.exception(
+                            "Failed to fetch messages for SSE fallback"
+                        )
+                        yield ": keep-alive\n\n"
         finally:
             broker.unsubscribe(session_id, player_id, queue)
 
