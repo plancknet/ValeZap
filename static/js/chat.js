@@ -27,6 +27,52 @@
         });
     };
 
+    const escapeHtml = (value) =>
+        String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+    const applyInlineFormats = (escaped) => {
+        const segments = escaped.split(/`([^`]+)`/g);
+        let composed = '';
+        segments.forEach((segment, index) => {
+            if (index % 2 === 1) {
+                composed += `<code>${segment}</code>`;
+            } else {
+                let formatted = segment
+                    .replace(/\*([^*\s][^*]*?)\*/g, '<strong>$1</strong>')
+                    .replace(/_([^_\s][^_]*?)_/g, '<em>$1</em>')
+                    .replace(/~([^~]+)~/g, '<s>$1</s>')
+                    .replace(/?
+/g, '<br>');
+                composed += formatted;
+            }
+        });
+        return composed;
+    };
+
+    const formatMessageText = (raw) => {
+        if (!raw) {
+            return '';
+        }
+        const parts = String(raw).split(/```([\s\S]*?)```/g);
+        let result = '';
+        parts.forEach((part, index) => {
+            if (index % 2 === 1) {
+                const code = escapeHtml(part).replace(//g, '').replace(/
+/g, '<br>');
+                result += `<pre class="message-preformatted">${code}</pre>`;
+            } else {
+                const escaped = escapeHtml(part);
+                result += applyInlineFormats(escaped);
+            }
+        });
+        return result;
+    };
+
     const getMessageKey = (message) => {
         if (!message) {
             return '';
@@ -59,6 +105,51 @@
         }
     };
 
+    const registerPendingMessage = (message, element) => {
+        const entry = {
+            tempId: message.id || null,
+            key: getMessageKey(message),
+            text: (message.message || '').trim(),
+            session_id: message.session_id,
+            player_id: message.player_id,
+            element,
+        };
+        pendingMessages.push(entry);
+        return entry;
+    };
+
+    const replacePendingMessage = (entry, finalMessage) => {
+        if (!entry || !finalMessage) {
+            return;
+        }
+        const newKey = getMessageKey(finalMessage);
+        renderedMessages.delete(entry.key);
+        renderedMessages.add(newKey);
+
+        const element = entry.element;
+        if (element) {
+            element.dataset.messageId = finalMessage.id || '';
+            element.className = `message-group ${finalMessage.is_from_user ? 'user' : 'bot'}`;
+            const textNode = element.querySelector('.message-text');
+            if (textNode) {
+                textNode.innerHTML = formatMessageText(finalMessage.message);
+            }
+            const metaNode = element.querySelector('.message-metadata');
+            if (metaNode) {
+                metaNode.textContent = formatTime(finalMessage.created_at);
+            }
+        }
+        removePendingEntry(entry);
+    };
+
+    const allowNextMessage = () => {
+        if (!sequencedMode || !waitingForReply) {
+            return;
+        }
+        waitingForReply = false;
+        toggleSendingState(false);
+    };
+
     const scrollToBottom = () => {
         const container = document.getElementById('messages-panel');
         container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
@@ -74,53 +165,6 @@
         } catch (error) {
             return '';
         }
-    };
-
-    const replacePendingMessage = (entry, finalMessage) => {
-        if (!entry || !finalMessage) {
-            return;
-        }
-
-        const newKey = getMessageKey(finalMessage);
-        renderedMessages.delete(entry.key);
-        renderedMessages.add(newKey);
-
-        const element = entry.element;
-        if (element) {
-            element.dataset.messageId = finalMessage.id || '';
-            element.className = `message-group ${finalMessage.is_from_user ? 'user' : 'bot'}`;
-            const textNode = element.querySelector('.message-text');
-            if (textNode) {
-                textNode.textContent = finalMessage.message;
-            }
-            const metaNode = element.querySelector('.message-metadata');
-            if (metaNode) {
-                metaNode.textContent = formatTime(finalMessage.created_at);
-            }
-        }
-
-        removePendingEntry(entry);
-    };
-
-    const registerPendingMessage = (message, element) => {
-        const entry = {
-            tempId: message.id || null,
-            key: getMessageKey(message),
-            text: (message.message || '').trim(),
-            session_id: message.session_id,
-            player_id: message.player_id,
-            element,
-        };
-        pendingMessages.push(entry);
-        return entry;
-    };
-
-    const allowNextMessage = () => {
-        if (!sequencedMode || !waitingForReply) {
-            return;
-        }
-        waitingForReply = false;
-        toggleSendingState(false);
     };
 
     let playerId = params.get('player') || storedPlayer || generateId();
@@ -154,7 +198,7 @@
 
         const text = document.createElement('p');
         text.className = 'message-text';
-        text.textContent = message.message;
+        text.innerHTML = formatMessageText(message.message);
         card.appendChild(text);
 
         const meta = document.createElement('span');
@@ -209,8 +253,7 @@
             pendingEntry = registerPendingMessage(userMessage, pendingElement);
         }
 
-        const enforceSequential = sequencedMode;
-        if (enforceSequential) {
+        if (sequencedMode) {
             waitingForReply = true;
         }
 
@@ -244,10 +287,9 @@
                 }
             }
             if (payload?.reply && payload.reply.message) {
-                renderMessage(payload.reply);
-                if (!payload.reply.is_from_user) {
-                    allowNextMessage();
-                }
+                const replyMessage = { ...payload.reply, is_from_user: false };
+                renderMessage(replyMessage);
+                allowNextMessage();
             }
         } catch (error) {
             console.error(error);
