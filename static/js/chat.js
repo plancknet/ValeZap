@@ -10,6 +10,8 @@
 
     const renderedMessages = new Set();
     const pendingMessages = [];
+    let sequencedMode = false;
+    let waitingForReply = false;
 
     const params = new URLSearchParams(window.location.search);
     const storedPlayer = localStorage.getItem('valezap_player_id');
@@ -113,6 +115,14 @@
         return entry;
     };
 
+    const allowNextMessage = () => {
+        if (!sequencedMode || !waitingForReply) {
+            return;
+        }
+        waitingForReply = false;
+        toggleSendingState(false);
+    };
+
     let playerId = params.get('player') || storedPlayer || generateId();
     if (!params.get('player')) {
         localStorage.setItem('valezap_player_id', playerId);
@@ -172,8 +182,8 @@
             statusIndicator.textContent = 'Enviando...';
         } else {
             sendButton.removeAttribute('aria-busy');
-            sendButton.disabled = textarea.value.trim().length === 0;
-            statusIndicator.textContent = 'Online';
+            sendButton.disabled = waitingForReply || textarea.value.trim().length === 0;
+            statusIndicator.textContent = waitingForReply ? 'Aguardando resposta...' : 'Online';
         }
     };
 
@@ -197,6 +207,11 @@
         let pendingEntry = null;
         if (pendingElement) {
             pendingEntry = registerPendingMessage(userMessage, pendingElement);
+        }
+
+        const enforceSequential = sequencedMode;
+        if (enforceSequential) {
+            waitingForReply = true;
         }
 
         toggleSendingState(true);
@@ -230,9 +245,13 @@
             }
             if (payload?.reply && payload.reply.message) {
                 renderMessage(payload.reply);
+                if (!payload.reply.is_from_user) {
+                    allowNextMessage();
+                }
             }
         } catch (error) {
             console.error(error);
+            waitingForReply = false;
             const entry = pendingEntry || findPendingByTempId(userMessage.id);
             if (entry) {
                 renderedMessages.delete(entry.key);
@@ -250,7 +269,16 @@
                 created_at: new Date().toISOString(),
             });
         } finally {
-            toggleSendingState(false);
+            if (!sequencedMode) {
+                sequencedMode = true;
+            }
+            if (waitingForReply) {
+                sendButton.removeAttribute('aria-busy');
+                sendButton.disabled = true;
+                statusIndicator.textContent = 'Aguardando resposta...';
+            } else {
+                toggleSendingState(false);
+            }
         }
     };
 
@@ -285,6 +313,9 @@
                         }
                     }
                     renderMessage(data);
+                    if (!data.is_from_user) {
+                        allowNextMessage();
+                    }
                 }
             } catch (error) {
                 console.error('Erro ao processar mensagem SSE', error);
@@ -298,18 +329,23 @@
         };
 
         source.onopen = () => {
-            statusIndicator.textContent = 'Online';
+            statusIndicator.textContent = waitingForReply ? 'Aguardando resposta...' : 'Online';
         };
     };
 
     textarea.addEventListener('input', () => {
         textarea.style.height = 'auto';
         textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
-        sendButton.disabled = textarea.value.trim().length === 0;
+        if (!waitingForReply) {
+            sendButton.disabled = textarea.value.trim().length === 0;
+        }
     });
 
     form.addEventListener('submit', (event) => {
         event.preventDefault();
+        if (waitingForReply) {
+            return;
+        }
         const value = textarea.value;
         textarea.value = '';
         textarea.style.height = 'auto';
