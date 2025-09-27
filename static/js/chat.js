@@ -46,7 +46,8 @@
                     .replace(/\*([^*\s][^*]*?)\*/g, '<strong>$1</strong>')
                     .replace(/_([^_\s][^_]*?)_/g, '<em>$1</em>')
                     .replace(/~([^~]+)~/g, '<s>$1</s>')
-                    .replace(/?
+                    .replace(/
+?
 /g, '<br>');
                 composed += formatted;
             }
@@ -62,7 +63,8 @@
         let result = '';
         parts.forEach((part, index) => {
             if (index % 2 === 1) {
-                const code = escapeHtml(part).replace(//g, '').replace(/
+                const code = escapeHtml(part).replace(/
+/g, '').replace(/
 /g, '<br>');
                 result += `<pre class="message-preformatted">${code}</pre>`;
             } else {
@@ -253,9 +255,7 @@
             pendingEntry = registerPendingMessage(userMessage, pendingElement);
         }
 
-        if (sequencedMode) {
-            waitingForReply = true;
-        }
+        waitingForReply = true;
 
         toggleSendingState(true);
         try {
