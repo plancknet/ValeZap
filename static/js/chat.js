@@ -9,6 +9,7 @@
     const sessionInfo = document.getElementById('session-info');
 
     const renderedMessages = new Set();
+    const pendingMessages = [];
 
     const params = new URLSearchParams(window.location.search);
     const storedPlayer = localStorage.getItem('valezap_player_id');
@@ -24,16 +25,37 @@
         });
     };
 
-    let playerId = params.get('player') || storedPlayer || generateId();
-    if (!params.get('player')) {
-        localStorage.setItem('valezap_player_id', playerId);
-    }
+    const getMessageKey = (message) => {
+        if (!message) {
+            return '';
+        }
+        if (message.id) {
+            return String(message.id);
+        }
+        return `${message.session_id}-${message.player_id}-${message.message}-${message.created_at}`;
+    };
 
-    let sessionId = sessionStorage.getItem('valezap_session_id');
-    if (!sessionId) {
-        sessionId = generateId();
-        sessionStorage.setItem('valezap_session_id', sessionId);
-    }
+    const findPendingByTempId = (tempId) => pendingMessages.find((entry) => entry.tempId === tempId);
+
+    const findPendingMatch = (message) => {
+        if (!message || !message.message) {
+            return undefined;
+        }
+        const text = String(message.message).trim();
+        return pendingMessages.find(
+            (entry) =>
+                entry.text === text &&
+                entry.session_id === message.session_id &&
+                entry.player_id === message.player_id
+        );
+    };
+
+    const removePendingEntry = (entry) => {
+        const index = pendingMessages.indexOf(entry);
+        if (index !== -1) {
+            pendingMessages.splice(index, 1);
+        }
+    };
 
     const scrollToBottom = () => {
         const container = document.getElementById('messages-panel');
@@ -52,19 +74,70 @@
         }
     };
 
-    const renderMessage = (message) => {
-        if (!message || !message.message) {
+    const replacePendingMessage = (entry, finalMessage) => {
+        if (!entry || !finalMessage) {
             return;
         }
-        const key = message.id || `${message.session_id}-${message.player_id}-${message.message}-${message.created_at}`;
+
+        const newKey = getMessageKey(finalMessage);
+        renderedMessages.delete(entry.key);
+        renderedMessages.add(newKey);
+
+        const element = entry.element;
+        if (element) {
+            element.dataset.messageId = finalMessage.id || '';
+            element.className = `message-group ${finalMessage.is_from_user ? 'user' : 'bot'}`;
+            const textNode = element.querySelector('.message-text');
+            if (textNode) {
+                textNode.textContent = finalMessage.message;
+            }
+            const metaNode = element.querySelector('.message-metadata');
+            if (metaNode) {
+                metaNode.textContent = formatTime(finalMessage.created_at);
+            }
+        }
+
+        removePendingEntry(entry);
+    };
+
+    const registerPendingMessage = (message, element) => {
+        const entry = {
+            tempId: message.id || null,
+            key: getMessageKey(message),
+            text: (message.message || '').trim(),
+            session_id: message.session_id,
+            player_id: message.player_id,
+            element,
+        };
+        pendingMessages.push(entry);
+        return entry;
+    };
+
+    let playerId = params.get('player') || storedPlayer || generateId();
+    if (!params.get('player')) {
+        localStorage.setItem('valezap_player_id', playerId);
+    }
+
+    let sessionId = sessionStorage.getItem('valezap_session_id');
+    if (!sessionId) {
+        sessionId = generateId();
+        sessionStorage.setItem('valezap_session_id', sessionId);
+    }
+
+    const renderMessage = (message) => {
+        if (!message || !message.message) {
+            return null;
+        }
+        const key = getMessageKey(message);
         if (renderedMessages.has(key)) {
-            return;
+            return null;
         }
         renderedMessages.add(key);
 
         placeholder.style.display = 'none';
         const group = document.createElement('div');
         group.className = `message-group ${message.is_from_user ? 'user' : 'bot'}`;
+        group.dataset.messageId = message.id || '';
 
         const card = document.createElement('div');
         card.className = 'message-card';
@@ -82,11 +155,12 @@
         group.appendChild(card);
         messagesWrapper.appendChild(group);
         scrollToBottom();
+        return group;
     };
 
     const refreshDebug = () => {
         debugBar.textContent = `Session ID: ${sessionId} | Player ID: ${playerId}`;
-        sessionInfo.textContent = `Sessão ${sessionId.slice(0, 8)} · Player ${playerId.slice(0, 8)}`;
+        sessionInfo.textContent = `Sessao ${sessionId.slice(0, 8)} - Player ${playerId.slice(0, 8)}`;
     };
 
     refreshDebug();
@@ -119,7 +193,11 @@
             is_from_user: true,
             created_at: new Date().toISOString(),
         };
-        renderMessage(userMessage);
+        const pendingElement = renderMessage(userMessage);
+        let pendingEntry = null;
+        if (pendingElement) {
+            pendingEntry = registerPendingMessage(userMessage, pendingElement);
+        }
 
         toggleSendingState(true);
         try {
@@ -141,16 +219,33 @@
             }
 
             const payload = await response.json().catch(() => ({}));
+            const record = payload?.data?.record;
+            if (record && record.message) {
+                const existingEntry = findPendingByTempId(userMessage.id) || findPendingMatch(record);
+                if (existingEntry) {
+                    replacePendingMessage(existingEntry, record);
+                } else {
+                    renderMessage(record);
+                }
+            }
             if (payload?.reply && payload.reply.message) {
                 renderMessage(payload.reply);
             }
         } catch (error) {
             console.error(error);
+            const entry = pendingEntry || findPendingByTempId(userMessage.id);
+            if (entry) {
+                renderedMessages.delete(entry.key);
+                if (entry.element && entry.element.parentElement) {
+                    entry.element.parentElement.removeChild(entry.element);
+                }
+                removePendingEntry(entry);
+            }
             renderMessage({
                 id: generateId(),
                 session_id: sessionId,
                 player_id: playerId,
-                message: 'Não consegui enviar sua mensagem. Tente novamente em instantes.',
+                message: 'Nao consegui enviar sua mensagem. Tente novamente em instantes.',
                 is_from_user: false,
                 created_at: new Date().toISOString(),
             });
@@ -170,7 +265,7 @@
                 data.messages.forEach(renderMessage);
             }
         } catch (error) {
-            console.warn('Histórico indisponível', error);
+            console.warn('Historico indisponivel', error);
         }
     };
 
@@ -182,6 +277,13 @@
             try {
                 const data = JSON.parse(event.data);
                 if (data && data.message) {
+                    if (data.is_from_user) {
+                        const pendingEntry = findPendingMatch(data);
+                        if (pendingEntry) {
+                            replacePendingMessage(pendingEntry, data);
+                            return;
+                        }
+                    }
                     renderMessage(data);
                 }
             } catch (error) {
