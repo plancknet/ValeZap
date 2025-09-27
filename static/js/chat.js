@@ -10,14 +10,10 @@
 
     const renderedMessages = new Set();
     const pendingMessages = [];
-    let sequencedMode = false;
-    let waitingForReply = false;
-
     const params = new URLSearchParams(window.location.search);
-    const storedPlayer = localStorage.getItem('valezap_player_id');
 
     const generateId = () => {
-        if (window.crypto && window.crypto.randomUUID) {
+        if (window.crypto?.randomUUID) {
             return window.crypto.randomUUID();
         }
         return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -26,7 +22,6 @@
             return v.toString(16);
         });
     };
-
 
     const escapeHtml = (value) =>
         String(value)
@@ -50,7 +45,8 @@
                 composed += formatted;
             }
         });
-        return composed.replace(/?
+        return composed.replace(/
+?
 /g, '<br>');
     };
 
@@ -62,7 +58,8 @@
         let result = '';
         parts.forEach((part, index) => {
             if (index % 2 === 1) {
-                const code = escapeHtml(part).replace(/?
+                const code = escapeHtml(part).replace(/
+?
 /g, '<br>');
                 result += `<pre class="message-preformatted">${code}</pre>`;
             } else {
@@ -73,7 +70,7 @@
         return result;
     };
 
-    const getMessageKey = (message) => {
+    const renderedKey = (message) => {
         if (!message) {
             return '';
         }
@@ -83,13 +80,8 @@
         return `${message.session_id}-${message.player_id}-${message.message}-${message.created_at}`;
     };
 
-    const findPendingByTempId = (tempId) => pendingMessages.find((entry) => entry.tempId === tempId);
-
     const findPendingMatch = (message) => {
-        if (!message || !message.message) {
-            return undefined;
-        }
-        const text = String(message.message).trim();
+        const text = (message?.message || '').trim();
         return pendingMessages.find(
             (entry) =>
                 entry.text === text &&
@@ -108,7 +100,7 @@
     const registerPendingMessage = (message, element) => {
         const entry = {
             tempId: message.id || null,
-            key: getMessageKey(message),
+            key: renderedKey(message),
             text: (message.message || '').trim(),
             session_id: message.session_id,
             player_id: message.player_id,
@@ -118,56 +110,7 @@
         return entry;
     };
 
-    const replacePendingMessage = (entry, finalMessage) => {
-        if (!entry || !finalMessage) {
-            return;
-        }
-        const newKey = getMessageKey(finalMessage);
-        renderedMessages.delete(entry.key);
-        renderedMessages.add(newKey);
-
-        const element = entry.element;
-        if (element) {
-            element.dataset.messageId = finalMessage.id || '';
-            element.className = `message-group ${finalMessage.is_from_user ? 'user' : 'bot'}`;
-            const textNode = element.querySelector('.message-text');
-            if (textNode) {
-                textNode.innerHTML = formatMessageText(finalMessage.message);
-            }
-            const metaNode = element.querySelector('.message-metadata');
-            if (metaNode) {
-                metaNode.textContent = formatTime(finalMessage.created_at);
-            }
-        }
-        removePendingEntry(entry);
-    };
-
-    const allowNextMessage = () => {
-        if (!sequencedMode || !waitingForReply) {
-            return;
-        }
-        setWaitingForReply(false);
-        setWaitingForReply(false);
-    };
-
-    const scrollToBottom = () => {
-        const container = document.getElementById('messages-panel');
-        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-    };
-
-    const formatTime = (timestamp) => {
-        try {
-            const date = timestamp ? new Date(timestamp) : new Date();
-            return date.toLocaleTimeString('pt-BR', {
-                hour: '2-digit',
-                minute: '2-digit',
-            });
-        } catch (error) {
-            return '';
-        }
-    };
-
-    let playerId = params.get('player') || storedPlayer || generateId();
+    let playerId = params.get('player') || localStorage.getItem('valezap_player_id') || generateId();
     if (!params.get('player')) {
         localStorage.setItem('valezap_player_id', playerId);
     }
@@ -178,11 +121,25 @@
         sessionStorage.setItem('valezap_session_id', sessionId);
     }
 
+    const scrollToBottom = () => {
+        const container = document.getElementById('messages-panel');
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    };
+
+    const formatTime = (timestamp) => {
+        try {
+            const date = timestamp ? new Date(timestamp) : new Date();
+            return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        } catch (error) {
+            return '';
+        }
+    };
+
     const renderMessage = (message) => {
         if (!message || !message.message) {
             return null;
         }
-        const key = getMessageKey(message);
+        const key = renderedKey(message);
         if (renderedMessages.has(key)) {
             return null;
         }
@@ -219,8 +176,14 @@
 
     refreshDebug();
 
+    let waitingForReply = false;
+
     const updateSendButtonState = () => {
-        sendButton.disabled = waitingForReply || textarea.value.trim().length === 0;
+        if (waitingForReply) {
+            sendButton.disabled = true;
+            return;
+        }
+        sendButton.disabled = textarea.value.trim().length === 0;
     };
 
     const setWaitingForReply = (value) => {
@@ -228,26 +191,36 @@
         if (waitingForReply) {
             sendButton.setAttribute('aria-busy', 'true');
             statusIndicator.textContent = 'Aguardando resposta...';
+            sendButton.disabled = true;
         } else {
             sendButton.removeAttribute('aria-busy');
             statusIndicator.textContent = 'Online';
-        }
-        updateSendButtonState();
-    };
-
-    const toggleSendingState = (isSending) => {
-        if (isSending) {
-            setWaitingForReply(true);
-        } else if (!waitingForReply) {
             updateSendButtonState();
         }
+    };
+
+    const allowNextMessage = () => {
+        if (!waitingForReply) {
+            return;
+        }
+        setWaitingForReply(false);
+    };
+
+    const handlePendingReplacement = (message) => {
+        const entry = findPendingMatch(message);
+        if (!entry) {
+            return false;
+        }
+        renderMessage({ ...message, id: message.id || entry.tempId });
+        removePendingEntry(entry);
+        return true;
     };
 
     const clientKey = form.dataset.clientKey || '';
 
     const sendMessage = async (content) => {
         const sanitized = content.trim();
-        if (!sanitized) {
+        if (!sanitized || waitingForReply) {
             return;
         }
 
@@ -260,9 +233,8 @@
             created_at: new Date().toISOString(),
         };
         const pendingElement = renderMessage(userMessage);
-        let pendingEntry = null;
         if (pendingElement) {
-            pendingEntry = registerPendingMessage(userMessage, pendingElement);
+            registerPendingMessage(userMessage, pendingElement);
         }
 
         setWaitingForReply(true);
@@ -288,29 +260,17 @@
             const payload = await response.json().catch(() => ({}));
             const record = payload?.data?.record;
             if (record && record.message) {
-                const existingEntry = findPendingByTempId(userMessage.id) || findPendingMatch(record);
-                if (existingEntry) {
-                    replacePendingMessage(existingEntry, record);
-                } else {
+                if (!handlePendingReplacement(record)) {
                     renderMessage(record);
                 }
             }
             if (payload?.reply && payload.reply.message) {
-                const replyMessage = { ...payload.reply, is_from_user: false };
-                renderMessage(replyMessage);
+                renderMessage({ ...payload.reply, is_from_user: false });
                 allowNextMessage();
             }
         } catch (error) {
             console.error(error);
             setWaitingForReply(false);
-            const entry = pendingEntry || findPendingByTempId(userMessage.id);
-            if (entry) {
-                renderedMessages.delete(entry.key);
-                if (entry.element && entry.element.parentElement) {
-                    entry.element.parentElement.removeChild(entry.element);
-                }
-                removePendingEntry(entry);
-            }
             renderMessage({
                 id: generateId(),
                 session_id: sessionId,
@@ -320,10 +280,7 @@
                 created_at: new Date().toISOString(),
             });
         } finally {
-            if (!sequencedMode) {
-                sequencedMode = true;
-            }
-            if (!waitingForReply) {
+            if (waitingForReply) {
                 setWaitingForReply(false);
             }
         }
@@ -336,7 +293,7 @@
                 return;
             }
             const data = await response.json();
-            if (Array.isArray(data.messages) && data.messages.length) {
+            if (Array.isArray(data.messages)) {
                 data.messages.forEach(renderMessage);
             }
         } catch (error) {
@@ -352,17 +309,12 @@
             try {
                 const data = JSON.parse(event.data);
                 if (data && data.message) {
-                    if (data.is_from_user) {
-                        const pendingEntry = findPendingMatch(data);
-                        if (pendingEntry) {
-                            replacePendingMessage(pendingEntry, data);
-                            return;
-                        }
-                    }
-                    renderMessage(data);
                     if (!data.is_from_user) {
                         allowNextMessage();
+                    } else if (handlePendingReplacement(data)) {
+                        return;
                     }
+                    renderMessage(data);
                 }
             } catch (error) {
                 console.error('Erro ao processar mensagem SSE', error);
@@ -390,13 +342,10 @@
 
     form.addEventListener('submit', (event) => {
         event.preventDefault();
-        if (waitingForReply) {
-            return;
-        }
         const value = textarea.value;
         textarea.value = '';
         textarea.style.height = 'auto';
-        sendButton.disabled = true;
+        updateSendButtonState();
         sendMessage(value);
         textarea.focus();
     });

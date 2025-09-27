@@ -179,9 +179,37 @@ body {
     margin: 0;
     font-size: 14px;
     line-height: 1.45;
-    white-space: pre-wrap;
+    white-space: normal;
     word-break: break-word;
 }
+.message-text strong {
+    font-weight: 700;
+}
+
+.message-text em {
+    font-style: italic;
+}
+
+.message-text s {
+    text-decoration: line-through;
+}
+
+.message-text code {
+    font-family: 'Fira Code', 'Courier New', monospace;
+    background: rgba(31, 44, 52, 0.08);
+    padding: 0 4px;
+    border-radius: 4px;
+}
+
+.message-preformatted {
+    font-family: 'Fira Code', 'Courier New', monospace;
+    background: rgba(31, 44, 52, 0.08);
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin: 6px 0;
+    display: block;
+}
+
 
 .message-metadata {
     display: block;
