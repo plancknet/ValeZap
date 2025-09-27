@@ -27,6 +27,7 @@
         });
     };
 
+
     const escapeHtml = (value) =>
         String(value)
             .replace(/&/g, '&amp;')
@@ -43,16 +44,14 @@
                 composed += `<code>${segment}</code>`;
             } else {
                 let formatted = segment
-                    .replace(/\*([^*\s][^*]*?)\*/g, '<strong>$1</strong>')
-                    .replace(/_([^_\s][^_]*?)_/g, '<em>$1</em>')
-                    .replace(/~([^~]+)~/g, '<s>$1</s>')
-                    .replace(/
-?
-/g, '<br>');
+                    .replace(/\*(\S[^*]*?)\*/g, '<strong>$1</strong>')
+                    .replace(/_(\S[^_]*?)_/g, '<em>$1</em>')
+                    .replace(/~(\S[^~]*?)~/g, '<s>$1</s>');
                 composed += formatted;
             }
         });
-        return composed;
+        return composed.replace(/?
+/g, '<br>');
     };
 
     const formatMessageText = (raw) => {
@@ -63,8 +62,7 @@
         let result = '';
         parts.forEach((part, index) => {
             if (index % 2 === 1) {
-                const code = escapeHtml(part).replace(/
-/g, '').replace(/
+                const code = escapeHtml(part).replace(/?
 /g, '<br>');
                 result += `<pre class="message-preformatted">${code}</pre>`;
             } else {
@@ -382,12 +380,12 @@
         };
     };
 
+    updateSendButtonState();
+
     textarea.addEventListener('input', () => {
         textarea.style.height = 'auto';
         textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
-        if (!waitingForReply) {
-            sendButton.disabled = textarea.value.trim().length === 0;
-        }
+        updateSendButtonState();
     });
 
     form.addEventListener('submit', (event) => {
@@ -405,6 +403,6 @@
 
     loadHistory().then(() => {
         connectStream();
-        toggleSendingState(false);
+        setWaitingForReply(false);
     });
 })();
