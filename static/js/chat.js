@@ -148,8 +148,8 @@
         if (!sequencedMode || !waitingForReply) {
             return;
         }
-        waitingForReply = false;
-        toggleSendingState(false);
+        setWaitingForReply(false);
+        setWaitingForReply(false);
     };
 
     const scrollToBottom = () => {
@@ -221,15 +221,27 @@
 
     refreshDebug();
 
-    const toggleSendingState = (isSending) => {
-        if (isSending) {
+    const updateSendButtonState = () => {
+        sendButton.disabled = waitingForReply || textarea.value.trim().length === 0;
+    };
+
+    const setWaitingForReply = (value) => {
+        waitingForReply = value;
+        if (waitingForReply) {
             sendButton.setAttribute('aria-busy', 'true');
-            sendButton.disabled = true;
-            statusIndicator.textContent = 'Enviando...';
+            statusIndicator.textContent = 'Aguardando resposta...';
         } else {
             sendButton.removeAttribute('aria-busy');
-            sendButton.disabled = waitingForReply || textarea.value.trim().length === 0;
-            statusIndicator.textContent = waitingForReply ? 'Aguardando resposta...' : 'Online';
+            statusIndicator.textContent = 'Online';
+        }
+        updateSendButtonState();
+    };
+
+    const toggleSendingState = (isSending) => {
+        if (isSending) {
+            setWaitingForReply(true);
+        } else if (!waitingForReply) {
+            updateSendButtonState();
         }
     };
 
@@ -255,9 +267,8 @@
             pendingEntry = registerPendingMessage(userMessage, pendingElement);
         }
 
-        waitingForReply = true;
+        setWaitingForReply(true);
 
-        toggleSendingState(true);
         try {
             const response = await fetch('/functions/v1/webhook-valezap', {
                 method: 'POST',
@@ -293,7 +304,7 @@
             }
         } catch (error) {
             console.error(error);
-            waitingForReply = false;
+            setWaitingForReply(false);
             const entry = pendingEntry || findPendingByTempId(userMessage.id);
             if (entry) {
                 renderedMessages.delete(entry.key);
@@ -314,12 +325,8 @@
             if (!sequencedMode) {
                 sequencedMode = true;
             }
-            if (waitingForReply) {
-                sendButton.removeAttribute('aria-busy');
-                sendButton.disabled = true;
-                statusIndicator.textContent = 'Aguardando resposta...';
-            } else {
-                toggleSendingState(false);
+            if (!waitingForReply) {
+                setWaitingForReply(false);
             }
         }
     };
