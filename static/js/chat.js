@@ -396,5 +396,8 @@
         textarea.focus();
     });
 
-    loadHistory().then(connectStream);
+    loadHistory().then(() => {
+        connectStream();
+        toggleSendingState(false);
+    });
 })();
