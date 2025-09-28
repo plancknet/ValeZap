@@ -32,7 +32,12 @@ pages_bp = Blueprint("pages", __name__)
 ALLOWED_WEBHOOK_HOSTS = {"n8n-n8n-webhook.jhbg9t.easypanel.host"}
 
 
-def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> dict[str, str] | None:
+def dispatch_external_webhook(
+    session_id: str,
+    player_id: str,
+    message: str,
+    vendor_id: str | None = None,
+) -> dict[str, str] | None:
     webhook_url = current_app.config.get("EXTERNAL_WEBHOOK_URL", "").strip()
     if not webhook_url:
         current_app.logger.info("External webhook skipped: no URL configured")
@@ -50,11 +55,14 @@ def dispatch_external_webhook(session_id: str, player_id: str, message: str) -> 
         "player": player_id,
         "message": message,
     }
+    if vendor_id:
+        payload["vendedor"] = vendor_id
     current_app.logger.info(
-        "Dispatching external webhook to %s for session=%s player=%s",
+        "Dispatching external webhook to %s for session=%s player=%s vendor=%s",
         webhook_url,
         session_id,
         player_id,
+        vendor_id or "-",
     )
 
     try:
@@ -319,11 +327,13 @@ def webhook_valezap() -> Response:
     sessao = _pick_payload_value(payload, "sessao", "session", "session_id")
     player = _pick_payload_value(payload, "player", "player_id")
     mensagem = _pick_payload_value(payload, "mensagem", "message", "content", "texto")
+    vendedor = _pick_payload_value(payload, "vendedor", "vendor")
 
     current_app.logger.info(
-        "Webhook payload parsed: session=%s player=%s message_length=%s",
+        "Webhook payload parsed: session=%s player=%s vendor=%s message_length=%s",
         sessao or "-",
         player or "-",
+        vendedor or "-",
         len(mensagem) if mensagem else 0,
     )
 
@@ -420,7 +430,7 @@ def webhook_valezap() -> Response:
             user_dict.get("id"),
         )
 
-        reply_data = dispatch_external_webhook(sessao, player, mensagem)
+        reply_data = dispatch_external_webhook(sessao, player, mensagem, vendedor)
 
         response_payload: dict[str, object] = {
             "sessao": sessao,
@@ -428,6 +438,8 @@ def webhook_valezap() -> Response:
             "mensagem": mensagem,
             "record": user_dict,
         }
+        if vendedor:
+            response_payload["vendedor"] = vendedor
         status_code = 202
 
         if reply_data:
