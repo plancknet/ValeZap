@@ -34,7 +34,6 @@ ALLOWED_WEBHOOK_HOSTS = {"n8n-n8n-webhook.jhbg9t.easypanel.host"}
 
 def dispatch_external_webhook(
     session_id: str,
-    player_id: str,
     message: str,
     vendor_id: str | None = None,
 ) -> dict[str, str] | None:
@@ -52,16 +51,14 @@ def dispatch_external_webhook(
 
     payload = {
         "session": session_id,
-        "player": player_id,
         "message": message,
     }
     if vendor_id:
         payload["vendedor"] = vendor_id
     current_app.logger.info(
-        "Dispatching external webhook to %s for session=%s player=%s vendor=%s",
+        "Dispatching external webhook to %s for session=%s vendor=%s",
         webhook_url,
         session_id,
-        player_id,
         vendor_id or "-",
     )
 
@@ -106,21 +103,13 @@ def dispatch_external_webhook(
     ) or session_id
     reply_session = _normalize_uuid(raw_reply_session, session_id, label="session")
 
-    raw_reply_player = _extract_nested_value(
-        data,
-        ("player", "player_id"),
-    ) or player_id
-    reply_player = _normalize_uuid(raw_reply_player, player_id, label="player")
-
     current_app.logger.info(
-        "External webhook produced reply for session=%s player=%s",
+        "External webhook produced reply for session=%s",
         reply_session,
-        reply_player,
     )
 
     return {
         "session_id": reply_session,
-        "player_id": reply_player,
         "message": reply_text,
     }
 
@@ -221,17 +210,13 @@ def healthcheck() -> Response:
 @api_bp.route("/api/messages", methods=["GET"])
 def list_messages() -> Response:
     session_id = request.args.get("sessao") or request.args.get("session_id")
-    player_id = request.args.get("player") or request.args.get("player_id")
 
-    if not session_id or not player_id:
-        return jsonify({"error": "Missing sessao and player parameters"}), 400
+    if not session_id:
+        return jsonify({"error": "Missing sessao parameter"}), 400
 
     stmt = (
         select(ChatMessage)
-        .where(
-            ChatMessage.session_id == session_id,
-            ChatMessage.player_id == player_id,
-        )
+        .where(ChatMessage.session_id == session_id)
         .order_by(ChatMessage.created_at.asc())
     )
 
@@ -242,12 +227,11 @@ def list_messages() -> Response:
 @api_bp.route("/api/messages/stream", methods=["GET"])
 def stream_messages() -> Response:
     session_id = request.args.get("sessao") or request.args.get("session_id")
-    player_id = request.args.get("player") or request.args.get("player_id")
 
-    if not session_id or not player_id:
-        return jsonify({"error": "Missing sessao and player parameters"}), 400
+    if not session_id:
+        return jsonify({"error": "Missing sessao parameter"}), 400
 
-    queue = broker.subscribe(session_id, player_id)
+    queue = broker.subscribe(session_id)
     last_seen_at = datetime.now(timezone.utc)
     seen_ids: set[str] = set()
 
@@ -278,7 +262,6 @@ def stream_messages() -> Response:
                             select(ChatMessage)
                             .where(
                                 ChatMessage.session_id == session_id,
-                                ChatMessage.player_id == player_id,
                                 ChatMessage.created_at > last_seen_at,
                             )
                             .order_by(ChatMessage.created_at.asc())
@@ -308,7 +291,7 @@ def stream_messages() -> Response:
                         )
                         yield ": keep-alive\n\n"
         finally:
-            broker.unsubscribe(session_id, player_id, queue)
+            broker.unsubscribe(session_id, queue)
 
     response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
@@ -325,26 +308,23 @@ def webhook_valezap() -> Response:
     )
 
     sessao = _pick_payload_value(payload, "sessao", "session", "session_id")
-    player = _pick_payload_value(payload, "player", "player_id")
     mensagem = _pick_payload_value(payload, "mensagem", "message", "content", "texto")
     vendedor = _pick_payload_value(payload, "vendedor", "vendor")
 
     current_app.logger.info(
-        "Webhook payload parsed: session=%s player=%s vendor=%s message_length=%s",
+        "Webhook payload parsed: session=%s vendor=%s message_length=%s",
         sessao or "-",
-        player or "-",
         vendedor or "-",
         len(mensagem) if mensagem else 0,
     )
 
-    if not sessao or not player or not mensagem:
+    if not sessao or not mensagem:
         current_app.logger.warning(
-            "Webhook rejected: missing required fields (session=%s, player=%s, has_message=%s)",
+            "Webhook rejected: missing required fields (session=%s, has_message=%s)",
             bool(sessao),
-            bool(player),
             bool(mensagem),
         )
-        return jsonify({"error": "Parametros obrigatorios: sessao, player, mensagem"}), 400
+        return jsonify({"error": "Parametros obrigatorios: sessao, mensagem"}), 400
 
     provided_key = (
         request.headers.get("x-api-key")
@@ -392,13 +372,11 @@ def webhook_valezap() -> Response:
     try:
         if is_service_request:
             current_app.logger.info(
-                "Persisting service message for session=%s player=%s",
+                "Persisting service message for session=%s",
                 sessao,
-                player,
             )
             message_record = ChatMessage(
                 session_id=sessao,
-                player_id=player,
                 message=mensagem,
                 is_from_user=False,
             )
@@ -412,13 +390,11 @@ def webhook_valezap() -> Response:
             return jsonify({"success": True, "data": message_dict}), 200
 
         current_app.logger.info(
-            "Persisting user message for session=%s player=%s",
+            "Persisting user message for session=%s",
             sessao,
-            player,
         )
         user_message = ChatMessage(
             session_id=sessao,
-            player_id=player,
             message=mensagem,
             is_from_user=True,
         )
@@ -430,11 +406,10 @@ def webhook_valezap() -> Response:
             user_dict.get("id"),
         )
 
-        reply_data = dispatch_external_webhook(sessao, player, mensagem, vendedor)
+        reply_data = dispatch_external_webhook(sessao, mensagem, vendedor)
 
         response_payload: dict[str, object] = {
             "sessao": sessao,
-            "player": player,
             "mensagem": mensagem,
             "record": user_dict,
         }
@@ -444,13 +419,11 @@ def webhook_valezap() -> Response:
 
         if reply_data:
             current_app.logger.info(
-                "Reply received from external webhook for session=%s player=%s",
+                "Reply received from external webhook for session=%s",
                 reply_data["session_id"],
-                reply_data["player_id"],
             )
             reply_message = ChatMessage(
                 session_id=reply_data["session_id"],
-                player_id=reply_data["player_id"],
                 message=reply_data["message"],
                 is_from_user=False,
             )

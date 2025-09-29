@@ -40,8 +40,8 @@ gunicorn -c gunicorn.conf.py 'main:app'
 
 - `GET /` – Interface web do chat.
 - `POST /functions/v1/webhook-valezap` – Endpoint compatível com o webhook original para registrar mensagens.
-- `GET /api/messages` – Retorna histórico por sessão e player.
-- `GET /api/messages/stream` – Stream SSE para mensagens em tempo real.
+- `GET /api/messages` - Retorna histórico por sessão.
+- `GET /api/messages/stream` - Stream SSE para mensagens em tempo real por sessão.
 - `GET /health` – Healthcheck simples.
 
 ## Estrutura

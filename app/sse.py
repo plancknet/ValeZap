@@ -4,42 +4,35 @@ import json
 import threading
 from collections import defaultdict
 from queue import Queue, Empty
-from typing import Any, Dict, Generator, Tuple
-
-
-SubscriberKey = Tuple[str, str]
+from typing import Any, Dict
 
 
 class MessageBroker:
     """Simple in-memory pub-sub broker for SSE streaming."""
 
     def __init__(self) -> None:
-        self._subscribers: Dict[SubscriberKey, list[Queue]] = defaultdict(list)
+        self._subscribers: Dict[str, list[Queue]] = defaultdict(list)
         self._lock = threading.Lock()
 
-    def subscribe(self, session_id: str, player_id: str) -> Queue:
+    def subscribe(self, session_id: str) -> Queue:
         queue: Queue = Queue()
-        key = (session_id, player_id)
         with self._lock:
-            self._subscribers[key].append(queue)
+            self._subscribers[session_id].append(queue)
         return queue
 
-    def unsubscribe(self, session_id: str, player_id: str, queue: Queue) -> None:
-        key = (session_id, player_id)
+    def unsubscribe(self, session_id: str, queue: Queue) -> None:
         with self._lock:
-            if key in self._subscribers and queue in self._subscribers[key]:
-                self._subscribers[key].remove(queue)
-            if key in self._subscribers and not self._subscribers[key]:
-                del self._subscribers[key]
+            if session_id in self._subscribers and queue in self._subscribers[session_id]:
+                self._subscribers[session_id].remove(queue)
+            if session_id in self._subscribers and not self._subscribers[session_id]:
+                del self._subscribers[session_id]
 
     def publish(self, message: dict[str, Any]) -> None:
         session_id = message.get("session_id")
-        player_id = message.get("player_id")
-        if not session_id or not player_id:
+        if not session_id:
             return
-        key = (session_id, player_id)
         with self._lock:
-            queues = list(self._subscribers.get(key, []))
+            queues = list(self._subscribers.get(session_id, []))
         for queue in queues:
             queue.put_nowait(message)
 
