@@ -42,6 +42,9 @@
                     <p>Olá! Sou o ValeZap. Como posso te ajudar hoje?</p>
                 </div>
                 <div id="messages-wrapper"></div>
+                <button type="button" class="new-messages-indicator" id="new-messages-indicator" hidden aria-label="Ir para as novas mensagens">
+                    Novas mensagens
+                </button>
             </main>
 
             <footer class="chat-input">
@@ -60,3 +63,4 @@
     <script src="{{ url_for('static', filename='js/chat.js') }}" defer></script>
 </body>
 </html>
+
