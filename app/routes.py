@@ -402,11 +402,25 @@ def webhook_valezap() -> Response:
         db_session.commit()
         user_dict = user_message.to_dict()
         current_app.logger.info(
-            "User message stored id=%s; dispatching to external webhook",
+            "User message stored id=%s; evaluating auto-reply pipeline",
             user_dict.get("id"),
         )
 
-        reply_data = dispatch_external_webhook(sessao, mensagem, vendedor)
+        auto_reply_mode = (
+            current_app.config.get("AUTO_REPLY_MODE", "").strip().lower()
+        )
+        reply_data: dict[str, str] | None = None
+        if auto_reply_mode in {"webhook", "external"}:
+            current_app.logger.info(
+                "Auto-reply mode '%s' enabled; forwarding message to external webhook",
+                auto_reply_mode,
+            )
+            reply_data = dispatch_external_webhook(sessao, mensagem, vendedor)
+        else:
+            current_app.logger.debug(
+                "Auto-reply disabled (mode=%s); skipping external webhook",
+                auto_reply_mode or "unset",
+            )
 
         response_payload: dict[str, object] = {
             "sessao": sessao,
@@ -445,3 +459,5 @@ def webhook_valezap() -> Response:
         db_session.rollback()
         current_app.logger.exception("Erro ao processar mensagem")
         return jsonify({"error": "Erro interno ao registrar mensagem"}), 500
+
+

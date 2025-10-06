@@ -1,4 +1,4 @@
-import os
+﻿import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -25,6 +25,7 @@ class Config:
     CLIENT_API_KEY = os.getenv(
         "CLIENT_API_KEY", "webhook-api-key-placeholder"
     )
-    AUTO_REPLY_MODE = os.getenv("AUTO_REPLY_MODE", "echo")
+    AUTO_REPLY_MODE = os.getenv("AUTO_REPLY_MODE", "disabled")
     DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+
 
