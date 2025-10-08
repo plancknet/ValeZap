@@ -410,6 +410,7 @@ def webhook_valezap() -> Response:
             current_app.config.get("AUTO_REPLY_MODE", "").strip().lower()
         )
         reply_data: dict[str, str] | None = None
+
         if auto_reply_mode in {"webhook", "external"}:
             current_app.logger.info(
                 "Auto-reply mode '%s' enabled; forwarding message to external webhook",
@@ -418,9 +419,10 @@ def webhook_valezap() -> Response:
             reply_data = dispatch_external_webhook(sessao, mensagem, vendedor)
         else:
             current_app.logger.debug(
-                "Auto-reply disabled (mode=%s); skipping external webhook",
+                "Auto-reply disabled (mode=%s); forwarding webhook without rendering reply",
                 auto_reply_mode or "unset",
             )
+            dispatch_external_webhook(sessao, mensagem, vendedor)
 
         response_payload: dict[str, object] = {
             "sessao": sessao,
