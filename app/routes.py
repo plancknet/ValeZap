@@ -36,6 +36,7 @@ def dispatch_external_webhook(
     session_id: str,
     message: str,
     vendor_id: str | None = None,
+    room_name: str | None = None,
 ) -> dict[str, str] | None:
     webhook_url = current_app.config.get("EXTERNAL_WEBHOOK_URL", "").strip()
     if not webhook_url:
@@ -55,11 +56,14 @@ def dispatch_external_webhook(
     }
     if vendor_id:
         payload["vendedor"] = vendor_id
+    if room_name:
+        payload["nom_sala"] = room_name
     current_app.logger.info(
-        "Dispatching external webhook to %s for session=%s vendor=%s",
+        "Dispatching external webhook to %s for session=%s vendor=%s sala=%s",
         webhook_url,
         session_id,
         vendor_id or "-",
+        room_name or "-",
     )
 
     try:
@@ -310,11 +314,13 @@ def webhook_valezap() -> Response:
     sessao = _pick_payload_value(payload, "sessao", "session", "session_id")
     mensagem = _pick_payload_value(payload, "mensagem", "message", "content", "texto")
     vendedor = _pick_payload_value(payload, "vendedor", "vendor")
+    nome_sala = _pick_payload_value(payload, "nom_sala", "nome_sala", "sala")
 
     current_app.logger.info(
-        "Webhook payload parsed: session=%s vendor=%s message_length=%s",
+        "Webhook payload parsed: session=%s vendor=%s sala=%s message_length=%s",
         sessao or "-",
         vendedor or "-",
+        nome_sala or "-",
         len(mensagem) if mensagem else 0,
     )
 
@@ -416,13 +422,13 @@ def webhook_valezap() -> Response:
                 "Auto-reply mode '%s' enabled; forwarding message to external webhook",
                 auto_reply_mode,
             )
-            reply_data = dispatch_external_webhook(sessao, mensagem, vendedor)
+            reply_data = dispatch_external_webhook(sessao, mensagem, vendedor, nome_sala)
         else:
             current_app.logger.debug(
                 "Auto-reply disabled (mode=%s); forwarding webhook without rendering reply",
                 auto_reply_mode or "unset",
             )
-            dispatch_external_webhook(sessao, mensagem, vendedor)
+            dispatch_external_webhook(sessao, mensagem, vendedor, nome_sala)
 
         response_payload: dict[str, object] = {
             "sessao": sessao,
@@ -431,6 +437,8 @@ def webhook_valezap() -> Response:
         }
         if vendedor:
             response_payload["vendedor"] = vendedor
+        if nome_sala:
+            response_payload["nom_sala"] = nome_sala
         status_code = 202
 
         if reply_data:
