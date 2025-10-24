@@ -25,11 +25,17 @@
                         <span id="status-indicator">Online</span>
                     </div>
                 </div>
-                <button class="header-action" type="button" aria-label="Mais opções">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M12 6.75a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z" fill="currentColor"/>
-                    </svg>
-                </button>
+                <div class="header-actions">
+                    <button class="header-action" type="button" id="header-menu-button" aria-label="Mais opções" aria-expanded="false" aria-haspopup="true">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 6.75a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <div class="header-menu" id="header-menu" hidden>
+                        <button type="button" class="header-menu-item" data-font-action="increase">Aumentar fonte</button>
+                        <button type="button" class="header-menu-item" data-font-action="decrease">Diminuir fonte</button>
+                    </div>
+                </div>
             </header>
 
             <main class="messages-panel" id="messages-panel">
